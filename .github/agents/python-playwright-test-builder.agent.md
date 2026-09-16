@@ -149,6 +149,10 @@ evidenced steps, including:
 * Input boundaries, duplicate entries, isolation, and negative paths when established
 * Backend, streaming, persistence, or integration behavior when established
 
+Before branching on or interacting with a control, verify every required actionable
+state, including visibility and enabled state. A visible but disabled control must
+not select a workflow branch or block an alternative actionable control.
+
 Use `page.expect_response(...)` or equivalent observation around the real UI action.
 Do not issue a duplicate mutating API request. Do not log authorization headers,
 cookies, tokens, secrets, or complete sensitive response bodies.
@@ -191,13 +195,16 @@ Invoke `playwright-test-healer` exactly once after generation. Require it to:
 3. Run a representative workflow far enough to exercise every shared locator added by
    generation. Treat a visible target with a zero-match locator as a selector defect,
    not an application failure or approval wait.
-4. Run generated tests when the URL, browser, credentials, data, and services exist.
-5. Compare the generated code with the coverage manifest.
-6. Fail full end-to-end validation as incomplete when a required interface check,
+4. Verify conditional controls are visible and enabled before interaction. Confirm
+   that hidden or disabled controls cannot select a branch or prevent interaction
+   with another actionable control.
+5. Run generated tests when the URL, browser, credentials, data, and services exist.
+6. Compare the generated code with the coverage manifest.
+7. Fail full end-to-end validation as incomplete when a required interface check,
    prompt submission, intermediate step, generated response or documented error,
    follow-up action, negative path, or state transition is missing.
-7. Remove temporary artifacts created by the workflow.
-8. Never claim success without a successful pytest execution.
+8. Remove temporary artifacts created by the workflow.
+9. Never claim success without a successful pytest execution.
 
 ## Python conventions
 
