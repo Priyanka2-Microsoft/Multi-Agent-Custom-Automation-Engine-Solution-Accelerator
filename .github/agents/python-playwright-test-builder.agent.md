@@ -8,14 +8,13 @@ tools:
   - execute
   - agent
 agents:
-  - playwright-test-planner
-  - playwright-test-generator
-  - playwright-test-healer
+   - playwright-test-orchestrator
 ---
 
 # Python Playwright Test Builder
 
-Buid response or documented error, and subsequent state.
+Coordinate complete Python Playwright test suites through the Playwright Test
+Orchestrator.
 
 ## Inputs
 
@@ -30,20 +29,38 @@ application-wide requests to `full-e2e`. Ask once only when the URL is missing.
 
 ## Required Protocol
 
+### Mandatory orchestration
+
+1. Invoke `playwright-test-orchestrator` once per initial or resumed attempt with the
+   target URL, current workspace, coverage mode, requested plan path, and all
+   requirements in this agent.
+2. Do not invoke the planner, generator, or healer directly. The orchestrator owns
+   their sequencing. Treat Stages 1 through 6 below as acceptance criteria to pass
+   to the orchestrator, not as worker calls for this agent to execute.
+3. When the orchestrator returns `AUTHENTICATION_REQUIRED`, ask the user to sign in
+   through the browser opened for the target application. Do not request, collect,
+   or transmit credentials in chat.
+4. Wait for the user to confirm that sign-in completed, then invoke the orchestrator
+   once more in resume mode with `authentication-confirmed: true` and the returned
+   `resume-stage`, `worker`, and `scenario` checkpoint.
+5. Do not generate or run tests until the authentication preflight succeeds or the
+   orchestrator reports that the application is anonymous.
+
 ### Resume mode
 
-When the user asks to resume, validate the saved plan, coverage manifest, and
-canonical Python test module. Do not replan when they are valid. Compare planned
-scenario titles with existing `test_` functions, generate only missing scenarios,
-and invoke the healer once after reconciliation.
+When the user asks to resume, require the orchestrator to validate the saved plan,
+coverage manifest, and canonical Python test module. Do not replan when they are
+valid. Require it to compare planned scenario titles with existing `test_` functions,
+generate only missing scenarios, and invoke the healer once after reconciliation.
 
 ### Stage 1: Discover the baseline
 
 1. Discover available scenarios, use cases, sample inputs, and expected behavior
-   before opld a Python Playwright suite from a target application and available project context. Run the
-planner, generator, and healer in order. Generate Python `pytest-playwright` tests
-only. Cover the complete user workflow, including the interface, prompt submission,
-intermediate steps, generateening the application.
+   before building a Python Playwright suite from a target application and available
+   project context. Require the orchestrator to run planner, generator, and healer in
+   order. Generate Python `pytest-playwright` tests only. Cover the complete user
+   workflow, including the interface, prompt submission, intermediate steps,
+   generated response or documented error, and subsequent state.
 2. Search project documentation, source code, configuration, existing tests, and Git
    history when available.
 3. Discover documented scenarios, sample prompts, clarification inputs, user roles,
@@ -91,7 +108,8 @@ intermediate steps, generateening the application.
 
 ### Stage 3: Plan
 
-Invoke `playwright-test-planner` exactly once with:
+On an initial run or a resume requiring replanning, require the orchestrator to invoke
+`playwright-test-planner` exactly once with:
 
 * Target URL and coverage mode
 * Project and live-UI findings
@@ -131,10 +149,11 @@ not optional deferrals.
 
 ### Stage 4: Generate
 
-Invoke `playwright-test-generator` once per planned scenario and sequentially. Pass
-the exact steps and expected results, canonical-module context, fixture signatures,
-page-object APIs, sync or async style, markers, logging, reporting, URL configuration,
-and a temporary `.py` staging path outside the runnable test tree.
+Require the orchestrator to invoke `playwright-test-generator` once per planned
+scenario and sequentially. Pass the exact steps and expected results,
+canonical-module context, fixture signatures, page-object APIs, sync or async style,
+markers, logging, reporting, URL configuration, and a temporary `.py` staging path
+outside the runnable test tree.
 
 For every planned workflow, require the generated test to perform and check all
 evidenced steps, including:
@@ -180,7 +199,8 @@ transition.
 
 ### Stage 5: Heal
 
-Invoke `playwright-test-healer` exactly once after generation. Require it to:
+Require the orchestrator to invoke `playwright-test-healer` exactly once after
+generation. Require it to:
 
 * Run only the canonical Python module with `pytest`
 * Preserve tests, fixtures, page objects, configuration, and reporting

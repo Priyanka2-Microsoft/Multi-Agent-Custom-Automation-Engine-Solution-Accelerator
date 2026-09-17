@@ -6,6 +6,7 @@ tools:
   - search
   - edit
   - execute
+  - playwright-test/generator_setup_page
   - playwright-test/browser_console_messages
   - playwright-test/browser_evaluate
   - playwright-test/browser_generate_locator
@@ -18,9 +19,13 @@ mcp-servers:
     type: stdio
     command: npx
     args:
+      - --yes
+      - --userconfig=NUL
+      - --registry=https://packagefeedproxy.microsoft.io/npm/
       - playwright
       - run-test-mcp-server
     tools:
+      - generator_setup_page
       - browser_console_messages
       - browser_evaluate
       - browser_generate_locator
@@ -38,6 +43,11 @@ Your workflow:
 2. **Initial Execution**: Run the caller-provided targeted `pytest` command through the execution tool. Never use `test_run` or `npx playwright test`.
 3. **Debug failed tests**: Use pytest output and browser inspection tools to diagnose each failure.
 4. **Error Investigation**: When the test pauses on errors, use available Playwright MCP tools to:
+   - Invoke `generator_setup_page` with the failed scenario plan before the first
+     `browser_*` inspection call
+   - Pass only the plan, optional browser project, and optional existing Playwright
+     seed to setup. Do not pass a Python test path as `seedFile`
+   - Report any default temporary seed path for orchestrator cleanup
    - Examine the error details
    - Capture page snapshot to understand the context
    - Analyze selectors, timing issues, or assertion failures
@@ -84,3 +94,14 @@ Key principles:
   healing a Python target.
 - Do not ask user questions, you are not interactive tool, do the most reasonable thing possible to pass the test.
 - Never wait for networkidle or use other discouraged or deprecated apis
+
+## Response Format
+
+Return:
+
+* `status`: `PASSED`, `HEALED`, `AUTHENTICATION_REQUIRED`, or `BLOCKED`
+* Targeted pytest command, exit code, and concise failure summary
+* Files changed and verified fixes
+* Authentication evidence, `resume-stage: heal`, and open-browser status when login
+  is required
+* Remaining external blockers and temporary seed paths requiring cleanup

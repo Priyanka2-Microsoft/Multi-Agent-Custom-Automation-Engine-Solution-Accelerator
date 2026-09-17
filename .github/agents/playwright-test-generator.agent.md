@@ -5,6 +5,7 @@ user-invocable: false
 tools:
   - search
   - edit
+  - playwright-test/generator_setup_page
   - playwright-test/browser_click
   - playwright-test/browser_drag
   - playwright-test/browser_evaluate
@@ -30,9 +31,13 @@ mcp-servers:
     type: stdio
     command: npx
     args:
+      - --yes
+      - --userconfig=NUL
+      - --registry=https://packagefeedproxy.microsoft.io/npm/
       - playwright
       - run-test-mcp-server
     tools:
+      - generator_setup_page
       - browser_click
       - browser_drag
       - browser_evaluate
@@ -60,10 +65,18 @@ application behavior.
 
 # For each test you generate
 - Obtain the test plan with all the steps and verification specification
-- Treat `<seed-file>` as optional. Use it only when it identifies an existing Python
-  setup file. Never create a seed file.
+- Treat `<seed-file>` as optional. Pass it to MCP setup only when it identifies an
+  existing Playwright seed file, never a Python setup file.
 - Require `<test-language>python</test-language>`. If it is absent, still use Python.
-- Do not run `generator_setup_page` because it creates a TypeScript seed; navigate with `browser_navigate` and inspect the page directly
+- Invoke `generator_setup_page` exactly once before any `browser_*` tool. This setup
+  is mandatory for the Playwright test MCP server
+- Pass the complete scenario plan plus an optional browser project and optional
+  existing Playwright seed to setup. Setup does not accept Python context or a Python
+  staging path
+- When setup creates its default temporary seed, report that path so the orchestrator
+  can remove it during cleanup. Never treat the seed as generated test output
+- If setup opens a sign-in page, return `AUTHENTICATION_REQUIRED` without attempting
+  credentials or generating an unauthenticated test
 - For each step and verification in the scenario, do the following:
   - Use Playwright tool to manually execute it in real-time.
   - Use the step description as the intent for each Playwright tool call.
@@ -128,3 +141,15 @@ application behavior.
   evidence. Do not embed assumptions from another project or product.
 - Ground every expected result in the supplied plan, project context, or observed
   application behavior.
+
+## Response Format
+
+Return:
+
+* `status`: `GENERATED`, `AUTHENTICATION_REQUIRED`, or `BLOCKED`
+* Scenario name and exact Python staging path
+* Locator evidence and observed element counts
+* Authentication evidence, `resume-stage: generate`, scenario name, and open-browser
+  status when login is required
+* Blocked steps and their evidence
+* Temporary seed paths requiring orchestrator cleanup

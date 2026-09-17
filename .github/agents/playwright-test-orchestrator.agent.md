@@ -1,16 +1,25 @@
 ---
 name: playwright-test-orchestrator
-description: 'Runs a bounded plan, generate, and heal pipeline for Python pytest Playwright tests'
-disable-model-invocation: true
-tools:
-  - search
-  - edit
-  - execute
-  - agent
+description: 'Orchestrates authentication, planning, generation, healing, and execution for Python pytest Playwright tests'
+disable-model-invocation: false
+tools: [search, edit, execute, agent, playwright/browser_navigate, playwright/browser_snapshot, playwright/browser_wait_for]
 agents:
   - playwright-test-planner
   - playwright-test-generator
   - playwright-test-healer
+mcp-servers:
+  playwright:
+    type: stdio
+    command: npx
+    args:
+      - --yes
+      - --userconfig=NUL
+      - --registry=https://packagefeedproxy.microsoft.io/npm/
+      - '@playwright/mcp@latest'
+    tools:
+      - browser_navigate
+      - browser_snapshot
+      - browser_wait_for
 ---
 
 # Playwright Test Orchestrator
@@ -31,6 +40,29 @@ The output is a Python `pytest-playwright` suite, never a TypeScript Playwright 
 Ask once when the target URL is missing. Infer output paths from existing Python tests.
 
 ## Required Protocol
+
+### Authentication preflight
+
+1. Before invoking any worker, use `playwright/browser_navigate` to open the target
+   URL in the headed browser owned by this orchestrator, then inspect it with
+   `playwright/browser_snapshot`.
+2. Treat a Microsoft identity page, application sign-in page, login control, access
+   denied page, or redirect to an identity provider as authentication required.
+3. When authentication is required, stop without generating tests and return
+   `AUTHENTICATION_REQUIRED` with the visible sign-in evidence and target URL. Tell
+   the builder to ask the user to complete sign-in in the opened browser. Leave the
+   browser open. Never ask for credentials, tokens, cookies, or one-time codes in
+   chat.
+4. When called in resume mode with `authentication-confirmed: true`, repeat the
+   preflight. Continue only when the target application is visible and authenticated.
+5. If the target application supports anonymous access, record that result and
+   continue without prompting for login.
+6. Require each browser worker to verify that its own Playwright test context can
+   access the application. If a worker returns `AUTHENTICATION_REQUIRED`, propagate
+   that status with `resume-stage`, `worker`, and `scenario` checkpoint fields. Leave
+   the originating worker browser open and resume that stage after user confirmation.
+   Do not assume the general MCP profile automatically transfers to the Playwright
+   test runner.
 
 ### Resume Mode
 
@@ -67,27 +99,22 @@ requested by the user.
    ```text
    tests/e2e-test/
    |-- base/
-   |   |-- __init__.py
    |   `-- base.py
    |-- config/
-   |   |-- __init__.py
    |   `-- constants.py
    |-- pages/
-   |   |-- __init__.py
-   |   `-- <application_page>.py
+   |   `-- application_page.py
    |-- tests/
-   |   |-- __init__.py
    |   |-- conftest.py
-   |   `-- test_<application>_e2e.py
+   |   `-- test_application_e2e.py
    |-- pytest.ini
    `-- requirements.txt
    ```
 
 7. Select exactly one canonical Python test module for the target application.
    Prefer the established application module, including differently cased legacy
-   test-module names. Otherwise create `test_<application>_e2e.py`
-   for `full-e2e` or `test_<application>_smoke.py` for smoke coverage. Do not reuse an
-   unrelated accelerator's module.
+   test-module names. Otherwise use the builder-defined `test_application_e2e.py`.
+   Do not reuse an unrelated accelerator's module.
    Keep the selected path fixed for every scenario and future rerun of that
    application.
 8. Put browser lifecycle and authentication in fixtures, reusable locators and UI
@@ -98,9 +125,12 @@ requested by the user.
 
 ### Stage 1: Plan
 
-Invoke `playwright-test-planner` once with the target URL, project findings,
-coverage manifest, coverage mode, selected scenario, verbatim sample questions, and
-plan path. Require the following restrictions during planner browser exploration only:
+On an initial run or when the saved plan is missing, invalid, or explicitly requested
+for replacement, invoke `playwright-test-planner` once with the target URL, project
+findings, coverage manifest, coverage mode, selected scenario, verbatim sample
+questions, and plan path. Skip this stage for a valid resume. The orchestrator
+authentication preflight does not count as a planner invocation. Require the
+following restrictions during planner browser exploration only:
 
 * Read-only UI exploration
 * No form submission, content creation, upload, approval, or deletion
@@ -131,8 +161,8 @@ session.
 ### Stage 2: Generate
 
 For each planned scenario, invoke `playwright-test-generator` once and sequentially.
-Pass the exact suite, scenario, steps, expected results, an optional existing Python
-setup file when one applies, and:
+Pass the exact suite, scenario, steps, expected results, an optional existing
+Playwright seed when one applies, and:
 
 ```xml
 <test-file>Temporary staging path outside the runnable test tree ending in .py</test-file>
@@ -223,4 +253,6 @@ Python test module. Tell it to:
 Report the plan path, canonical Python test-module path, reused or created structure,
 planned/generated/skipped counts, planner/generator/healer outcomes, pytest result,
 covered interface and generated-response scenarios, removed temporary artifacts, and
-external blockers.
+external blockers. For `AUTHENTICATION_REQUIRED`, also return the originating
+`worker`, `resume-stage`, optional `scenario`, visible evidence, and whether its
+browser remains open.
