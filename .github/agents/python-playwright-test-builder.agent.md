@@ -2,13 +2,17 @@
 name: Python Playwright Test Builder
 description: 'Builds complete Python Playwright suites for prompt-driven web applications'
 disable-model-invocation: true
+user-invocable: true
 tools:
+  - read
   - search
   - edit
   - execute
   - agent
 agents:
-   - playwright-test-orchestrator
+  - playwright-test-planner
+  - playwright-test-generator
+  - playwright-test-healer
 ---
 
 # Python Playwright Test Builder
@@ -27,42 +31,52 @@ Treat requests containing "end to end", "all scenarios", "everything", "golden
 path", or "regression suite" as `full-e2e`. Default ambiguous
 application-wide requests to `full-e2e`. Ask once only when the URL is missing.
 
+Before any file check, command, or subagent invocation, ask the user once whether the
+target requires Microsoft sign-in, Entra ID, or EasyAuth. Present exactly these two
+choices and wait for the selection:
+
+* **Yes - the app requires sign-in**
+* **No - the app is public / anonymous**
+
 ## Required Protocol
 
 ### Mandatory orchestration
 
-1. Invoke `playwright-test-orchestrator` once per initial or resumed attempt with the
-   target URL, current workspace, coverage mode, requested plan path, and all
-   requirements in this agent.
-2. Do not invoke the planner, generator, or healer directly. The orchestrator owns
-   their sequencing. Treat Stages 1 through 6 below as acceptance criteria to pass
-   to the orchestrator, not as worker calls for this agent to execute.
-3. When the orchestrator returns `AUTHENTICATION_REQUIRED`, ask the user to sign in
-   through the browser opened for the target application. Do not request, collect,
-   or transmit credentials in chat.
-4. Wait for the user to confirm that sign-in completed, then invoke the orchestrator
-   once more in resume mode with `authentication-confirmed: true` and the returned
-   `resume-stage`, `worker`, and `scenario` checkpoint.
-5. Do not generate or run tests until the authentication preflight succeeds or the
-   orchestrator reports that the application is anonymous.
+1. After receiving the authentication answer, read
+   `.github/agents/playwright-test-orchestrator.agent.md` and execute its Required
+   Protocol directly as the top-level agent. Do not invoke
+   `playwright-test-orchestrator` as a subagent because subagents cannot invoke the
+   planner, generator, and healer workers.
+2. Invoke `playwright-test-planner` exactly once, invoke
+   `playwright-test-generator` once per planned scenario and sequentially, then invoke
+   `playwright-test-healer` exactly once.
+3. Own the one-time interactive login, saved storage state, and worker configuration
+   defined by the orchestrator protocol. Do not ask for credentials.
+4. Do not generate or run tests until the authentication preflight succeeds or the
+   user confirms that the application is anonymous.
+5. Do not generate tests until the orchestrator's MCP and target preflight proves that
+   the exact MCP command starts, planner setup succeeds, and browser navigation lands
+   on the supplied target or its expected authentication redirect.
 
 ### Resume mode
 
-When the user asks to resume, require the orchestrator to validate the saved plan,
-coverage manifest, and canonical Python test module. Do not replan when they are
-valid. Require it to compare planned scenario titles with existing `test_` functions,
-generate only missing scenarios, and invoke the healer once after reconciliation.
+When the user asks to resume, validate the saved plan, coverage manifest, and
+canonical Python test module. Invoke the planner once in `preflight-only` mode and do
+not replace a valid plan. Compare planned
+scenario titles with existing `test_` functions, generate only missing scenarios,
+and invoke the healer once after reconciliation.
 
 ### Stage 1: Discover the baseline
 
+Keep discovery read-only until the orchestrator's MCP and target preflight passes.
+
 1. Discover available scenarios, use cases, sample inputs, and expected behavior
    before building a Python Playwright suite from a target application and available
-   project context. Require the orchestrator to run planner, generator, and healer in
-   order. Generate Python `pytest-playwright` tests only. Cover the complete user
+   project context. Run planner, generator, and healer in order. Generate Python
+   `pytest-playwright` tests only. Cover the complete user
    workflow, including the interface, prompt submission, intermediate steps,
    generated response or documented error, and subsequent state.
-2. Search project documentation, source code, configuration, existing tests, and Git
-   history when available.
+2. Search project documentation, source code, configuration, and existing tests.
 3. Discover documented scenarios, sample prompts, clarification inputs, user roles,
    modes, datasets, expected responses, expected errors, authentication requirements,
    and stateful transitions.
@@ -74,10 +88,13 @@ generate only missing scenarios, and invoke the healer once after reconciliation
    response, documented error, reset or cancellation, and scenario transitions.
    Include network or service checks only when existing tests or project evidence
    establish them as required behavior.
-6. Report expected framework files that are deleted or missing from the working tree
-   but present in Git history. Do not silently replace them.
+6. Ignore files deleted from `tests/e2e-test` completely. Do not read, restore,
+   recreate, report, or use them as framework evidence.
 
 ### Stage 2: Select the Python framework
+
+Enter this stage only after MCP and target preflight passes. Before that gate, select
+paths in memory but do not create or modify framework files.
 
 1. Search for an existing Python Playwright structure, pytest configuration,
    fixtures, page objects, base classes, constants, dependencies, and test modules.
@@ -86,7 +103,7 @@ generate only missing scenarios, and invoke the healer once after reconciliation
 3. When no equivalent structure exists, create one shared structure:
 
    ```text
-   tests/e2e-test/
+   tests/playwright-e2e/
    |-- base/
    |   `-- base.py
    |-- config/
@@ -108,7 +125,7 @@ generate only missing scenarios, and invoke the healer once after reconciliation
 
 ### Stage 3: Plan
 
-On an initial run or a resume requiring replanning, require the orchestrator to invoke
+On an initial run or a resume requiring replanning, invoke
 `playwright-test-planner` exactly once with:
 
 * Target URL and coverage mode
@@ -149,8 +166,8 @@ not optional deferrals.
 
 ### Stage 4: Generate
 
-Require the orchestrator to invoke `playwright-test-generator` once per planned
-scenario and sequentially. Pass the exact steps and expected results,
+Invoke `playwright-test-generator` once per planned scenario and sequentially. Pass
+the exact steps and expected results,
 canonical-module context, fixture signatures, page-object APIs, sync or async style,
 markers, logging, reporting, URL configuration, and a temporary `.py` staging path
 outside the runnable test tree.
@@ -167,6 +184,8 @@ evidenced steps, including:
 * Reset, next-task, navigation, or cross-scenario behavior
 * Input boundaries, duplicate entries, isolation, and negative paths when established
 * Backend, streaming, persistence, or integration behavior when established
+* Terminal backend AI-response content correlated with the rendered final response
+   when the browser can observe the HTTP, WebSocket, SSE, or streaming payload
 
 Before branching on or interacting with a control, verify every required actionable
 state, including visibility and enabled state. A visible but disabled control must
@@ -192,6 +211,10 @@ After each generator call:
 5. Preserve module-level imports, fixtures, logging, and reporting conventions.
 6. Delete the staging artifact.
 7. Delete TypeScript artifacts only when the current run created them.
+8. Compile, collect, and execute the integrated scenario before generating the next
+   one. Do not continue until it passes. Fix evidence-proven test defects immediately;
+   stop and report application defects or external blockers without weakening required
+   behavior.
 
 A full end-to-end scenario is incomplete if it stops before any planned user action,
 generated response or documented error, follow-up action, or required workflow
@@ -199,8 +222,7 @@ transition.
 
 ### Stage 5: Heal
 
-Require the orchestrator to invoke `playwright-test-healer` exactly once after
-generation. Require it to:
+Invoke `playwright-test-healer` exactly once after generation. Require it to:
 
 * Run only the canonical Python module with `pytest`
 * Preserve tests, fixtures, page objects, configuration, and reporting
